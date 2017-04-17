@@ -86,7 +86,7 @@ class Scraper
   def add_election_data(office, districts)
     districts.each do |district|
       district = district.first
-      aff_geo_id = build_aff_geoid(office, district['DistrictId'])
+      aff_geo_id = build_aff_geoid(office, district['District'].to_i.to_s)
       @election_data[office][aff_geo_id] ||= []
       @election_data[office][aff_geo_id] << district
     end
