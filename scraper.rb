@@ -4,7 +4,12 @@ require 'http'
 
 class Scraper
   ELECTIONS_ENDPOINT = 'http://www.electionreturns.pa.gov/api/ElectionReturn/GetAllElections?methodName=GetAllElections'.freeze
-  OFFICE_DATA_ENDPOINT = 'http://www.electionreturns.pa.gov/api/ElectionReturn/GetOfficeData?methodName=GetOfficeDetails'.freeze
+  OFFICE_DATA_ENDPOINT = 'http://www.electionreturns.pa.gov/api/ElectionReturn/GetOfficeData?methodName=GetOfficeDetails&electiontype=G&isactive=0'.freeze
+
+  ELECTION_IDS = {
+    2016 => 54,
+    2014 => 41
+  }.freeze
 
   OFFICE_IDS = {
     us_house: 11,
@@ -31,14 +36,15 @@ class Scraper
   end
 
   def scrape
-    fetch_elections.each do |election|
-      # we only care about general and special elections
-      next unless %w(G S).include?(election['ElectionType'])
+    # Fetch 2017 data for all offices
+    OFFICE_IDS.each do |label, office_id|
+      print '.'
 
-      OFFICE_IDS.each do |label, office_id|
-        fetch_office_data(election, label, office_id)
-      end
+      fetch_office_data(ELECTION_IDS[2016], label, office_id)
     end
+
+    # Fetch 2014 data for PA Senate
+    fetch_office_data(ELECTION_IDS[2014], :pa_senate, OFFICE_IDS[:pa_senate])
 
     puts
 
@@ -47,35 +53,17 @@ class Scraper
 
   private
 
-  def fetch_elections
-    elections_data = HTTP.get(ELECTIONS_ENDPOINT)
-    # The endpoint returns a JSON string, which contains an array with a single
-    # object containing the key "ElectionData" which is a string with nested
-    # JSON inside.
-    elections_string = JSON.parse(JSON.parse(elections_data)).first['ElectionData']
-    elections = JSON.parse(elections_string)
-    elections.each do |election|
-      election['ElectionDate'] = Date.strptime(election['ElectionDate'], '%m/%d/%Y')
-    end
-
-    elections.sort_by { |election| election['ElectionDate'] }.reverse
-  end
-
-  def fetch_office_data(election, label, office_id)
+  def fetch_office_data(election_id, label, office_id)
     office_data = HTTP.get(
       OFFICE_DATA_ENDPOINT,
       params: {
         officeID: office_id,
-        electionid: election['Electionid'],
-        electiontype: election['ElectionType'],
-        isactive: election['ISActive']
+        electionid: election_id
       }
     )
 
-    print '.'
-
     # Skip if we get an error response
-    return unless office_data.status.success?
+    return unless office_data.status == 200
 
     # Drill down to the data that we actually want
     data = JSON.parse(office_data.parse)['Election'].first.last.first.values
@@ -87,8 +75,27 @@ class Scraper
     districts.each do |district|
       district = district.first
       aff_geo_id = build_aff_geoid(office, district['District'].to_i.to_s)
-      @election_data[office][aff_geo_id] ||= []
-      @election_data[office][aff_geo_id] << district
+      @election_data[office][aff_geo_id] = format_district_data(district)
+    end
+  end
+
+  def format_district_data(district)
+    {
+      District: district['District'],
+      Candidates: format_candidates(district['Candidates'])
+    }
+  end
+
+  def format_candidates(candidates)
+    candidates.map do |candidate|
+      {
+        'ElectionYear' => candidate['ElectionYear'],
+        'OfficeName' => candidate['OfficeName'],
+        'PartyName' => candidate['PartyName'],
+        'CandidateName' => candidate['CandidateName'],
+        'Votes' => candidate['Votes'],
+        'Percentage' => candidate['Percentage']
+      }
     end
   end
 
@@ -101,7 +108,10 @@ class Scraper
 
   def write_files
     OFFICE_IDS.keys.each do |office|
-      File.write(office.to_s + '_data.json', JSON.pretty_generate(@election_data[office]))
+      File.write(
+        office.to_s + '_data.json',
+        JSON.pretty_generate(@election_data[office])
+      )
     end
   end
 end
