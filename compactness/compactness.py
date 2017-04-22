@@ -30,4 +30,4 @@ if __name__ == "__main__":
         set_of_geos.loc[:, 'Compactness'] = compactness_series
         gjson = set_of_geos.to_json()
         with open(f, 'w') as gjson_file:
-            json.dump(gjson, gjson_file)
+            gjson_file.write(gjson)
